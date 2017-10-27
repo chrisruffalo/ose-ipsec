@@ -1,0 +1,4 @@
+# uses existing ansible-openshift inventory
+- hosts: nodes
+  roles:
+    - "{{ playbook_dir }}/../roles/ipsec-member"

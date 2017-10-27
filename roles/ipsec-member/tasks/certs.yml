@@ -1,0 +1,28 @@
+# get nickname (just like documentation)
+- name: "Get nickname from certificate file"
+  shell: "openssl x509 -in /etc/origin/node/server.crt -subject -noout | cut -d= -f3 "
+  changed_when: false
+  register: server_nickname_result
+
+- name: "Save nickname"
+  set_fact:
+    server_nick: "{{ server_nickname_result.stdout }}"
+
+- name: "Combine certificate files into PKCS#12 bundle"
+  command: "openssl pkcs12 -export -in /etc/origin/node/server.crt -inkey /etc/origin/node/server.key -certfile /etc/origin/node/ca.crt -passout pass: -out /etc/origin/node/certs.p12"
+  args:
+    creates: /etc/origin/node/certs.p12
+
+- name: "Initialize ipsec database"
+  command: "ipsec initnss"
+  args:
+    creates: /etc/ipsec.d/*.db
+
+# this command really can't be idempotent unless we inspect the ipsec cert9 and/or key4 databases which seems overkill since it won't do anything to redo this
+- name: "Import certificate into certificate db"
+  command: "pk12util -i /etc/origin/node/certs.p12 -d sql:/etc/ipsec.d -W \"\""
+
+- name: "Remove temporary pkcs certs file"
+  file:
+    path: /etc/origin/node/certs.p12
+    state: absent
