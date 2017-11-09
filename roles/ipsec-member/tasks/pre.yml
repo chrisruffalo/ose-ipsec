@@ -30,7 +30,7 @@
     backrefs: yes
   register: mtu_changed
 
-# stop ipsec service if it exists
+# stop ipsec service if it exists (otherwise bridge removal can hang)
 - name: "Stop ipsec service if it exists when MTU is changed"
   service:
     name: "ipsec"
