@@ -1,36 +1,41 @@
-- name: "Check for original MTU in noipsec configuration"
-  stat:
-    path: "/etc/origin/node/node-config.noipsec.yaml"
-  register: conf_noipsec_st
+# all groups/peers need libreswan
+- name: "Install libreswan"
+  package:
+    name: libreswan
+
+# get libreswan version
+- name: "Get libreswan version to decide on opportunistic or point-to-point encryption"
+  command: "rpm -q libreswan --queryformat '%{VERSION}'"
+  args:
+    warn: false
   changed_when: false
+  register: libreswan_command
 
-- name: "Copy configuration to allow idempotent MTU subtraction and recovery if ipsec goes wrong"
-  copy:
-    src: "/etc/origin/node/node-config.yaml"
-    dest: "/etc/origin/node/node-config.noipsec.yaml"
-    remote_src: true
-  when: not conf_noipsec_st.stat.exists
-
-# copy master yaml into var
-- name: "Get node configuration YAML as string"
-  command: "cat /etc/origin/node/node-config.noipsec.yaml"
-  register: node_yaml_cat
-  changed_when: false
-
-# convert string into yaml
-- name: "Convert node configuration into yaml"
+- name: "Save libreswan version"
   set_fact:
-    node_conf: "{{ node_yaml_cat.stdout | from_yaml }}"
+    libreswan_version: "{{ libreswan_command.stdout }}"
 
-# use converted yaml as source for data to change MTU
-- name: "Set MTU for SDN to allow additional space for IPSec header (subtract 62 bytes)"
+# determine SDN MTU from openshift_node_sdn_mtu varaible, then from sdn_mtu if defined for host, and then from the default value
+- name: "Determine SDN MTU"
+  set_fact:
+    sdn_mtu: "{% if openshift_node_sdn_mtu is defined %}{{ openshift_node_sdn_mtu }}{% elif sdn_mtu is defined %}{{ sdn_mtu }}{% else %}{{ default_sdn_mtu }}{% endif %}"
+
+# use determined sdn_mtu to set mtu value, subtract 50 bytes for openshift and 62 for ipsec
+- name: "Set MTU for SDN to allow additional space for IPSec header (subtract 50 bytes for openshift and 62 bytes for ipsec)"
   lineinfile:
     path: "/etc/origin/node/node-config.yaml"
     state: present
     regexp: '^(.*)mtu:.*$'
-    line: "\\1mtu: {{ node_conf.networkConfig.mtu - 62 }}"
+    line: "\\1mtu: {{ sdn_mtu | int - default_openshift_overhead | int - default_ipsec_overhead | int }}"
     backrefs: yes
   register: mtu_changed
+
+# stop ipsec service if it exists
+- name: "Stop ipsec service if it exists when MTU is changed"
+  service:
+    name: "ipsec"
+    state: stopped
+  when: mtu_changed.changed
 
 # according to the documentation we need to in-line stop and start the atomic-openshift-node service
 - name: "Stop openshift node service when MTU is changed"
@@ -48,20 +53,3 @@
     name: "atomic-openshift-node"
     state: started
   when: mtu_changed.changed
-
-# all groups/peers need libreswan
-- name: "Install libreswan"
-  package:
-    name: libreswan
-
-# get libreswan version
-- name: "Get libreswan version to decide on opportunistic or point-to-point encryption"
-  command: "rpm -q libreswan --queryformat '%{VERSION}'"
-  args:
-    warn: false
-  changed_when: false
-  register: libreswan_command
-
-- name: "Save libreswan version"
-  set_fact:
-    libreswan_version: "{{ libreswan_command.stdout }}"
