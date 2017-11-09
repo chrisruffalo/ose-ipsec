@@ -35,6 +35,7 @@
   service:
     name: "ipsec"
     state: stopped
+  failed_when: false
   when: mtu_changed.changed
 
 # according to the documentation we need to in-line stop and start the atomic-openshift-node service
